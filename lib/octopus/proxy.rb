@@ -1,16 +1,19 @@
 require "set"
+require 'octopus/slave_group'
 require 'octopus/load_balancing/round_robin'
 
 class Octopus::Proxy
-  attr_accessor :config
+  attr_accessor :config, :sharded
 
   def initialize(config = Octopus.config)
     initialize_shards(config)
-    initialize_replication(config) if !config.nil? && config["replicated"]
+    initialize_replication(config) if !config.nil? && config["replicated"]# && !@shards_slave_groups.present? && !@slave_groups.present?
   end
 
   def initialize_shards(config)
     @shards = HashWithIndifferentAccess.new
+    @shards_slave_groups = HashWithIndifferentAccess.new
+    @slave_groups = HashWithIndifferentAccess.new
     @groups = {}
     @adapters = Set.new
     @config = ActiveRecord::Base.connection_pool_without_octopus.connection.instance_variable_get(:@config)
@@ -31,6 +34,21 @@ class Octopus::Proxy
         value.merge!(:octopus_shard => key)
         initialize_adapter(value['adapter'])
         @shards[key.to_sym] = connection_pool_for(value, "#{value['adapter']}_connection")
+
+        slave_group_configs = value.select {|k| k.match(/slave/) }
+        if slave_group_configs.present?
+          slave_groups = HashWithIndifferentAccess.new
+          slave_group_configs.each do |slave_group_name, slave_configs|
+            slaves = HashWithIndifferentAccess.new
+            slave_configs.each do |slave_name, slave_config|
+              @shards[slave_name.to_sym] = connection_pool_for(slave_config, "#{value['adapter']}_connection")
+              slaves[slave_name.to_sym] = slave_name.to_sym
+            end
+            slave_groups[slave_group_name.to_sym] = Octopus::SlaveGroup.new(slaves)
+          end
+          @shards_slave_groups[key.to_sym] = slave_groups
+          @sharded = true
+        end
       elsif value.is_a?(Hash)
         @groups[key.to_s] = []
 
@@ -43,6 +61,9 @@ class Octopus::Proxy
           @shards[k.to_sym] = connection_pool_for(config_with_octopus_shard, "#{v['adapter']}_connection")
           @groups[key.to_s] << k.to_sym
         end
+
+        slaves = Hash[@groups[key.to_s].map {|k| @shards[k] }]
+        @slave_groups[key.to_sym] = Octopus::SlaveGroup.new(slaves)
       end
     end
 
@@ -75,8 +96,13 @@ class Octopus::Proxy
   end
 
   def current_shard=(shard_symbol)
+    self.current_slave_group = nil
     if shard_symbol.is_a?(Array)
       shard_symbol.each {|symbol| raise "Nonexistent Shard Name: #{symbol}" if @shards[symbol].nil? }
+    elsif shard_symbol.is_a?(Hash)
+      hash = shard_symbol
+      shard_symbol = hash[:shard]
+      self.current_slave_group = hash[:slave_group] if hash.key? :slave_group
     else
       raise "Nonexistent Shard Name: #{shard_symbol}" if @shards[shard_symbol].nil?
     end
@@ -95,6 +121,14 @@ class Octopus::Proxy
     end
 
     Thread.current["octopus.current_group"] = group_symbol
+  end
+
+  def current_slave_group
+    Thread.current["octopus.current_slave_group"]
+  end
+
+  def current_slave_group=(slave_group_symbol)
+    Thread.current["octopus.current_slave_group"] = slave_group_symbol
   end
 
   def block
@@ -190,7 +224,8 @@ class Octopus::Proxy
   end
 
   def transaction(options = {}, &block)
-    if @replicated && (current_model.replicated || @fully_replicated)
+    replicated = @replicated && (current_model.replicated || @fully_replicated)
+    if !sharded && replicated
       self.run_queries_on_shard(:master) do
         select_connection.transaction(options, &block)
       end
@@ -205,6 +240,10 @@ class Octopus::Proxy
       self.last_current_shard = self.current_shard
       clean_proxy()
       conn.send(method, *args, &block)
+    elsif should_send_queries_to_shard_slave_group?(method)
+      send_queries_to_shard_slave_group(method, *args, &block)
+    elsif should_send_queries_to_slave_group?(method)
+      send_queries_to_slave_group(method, *args, &block)
     elsif should_send_queries_to_replicated_databases?(method)
       send_queries_to_selected_slave(method, *args, &block)
     else
@@ -244,6 +283,47 @@ class Octopus::Proxy
   def connected?
     @shards.any? { |k, v| v.connected? }
   end
+
+
+
+
+  def should_send_queries_to_shard_slave_group?(method)
+    @replicated && method.to_s =~ /select/ && current_shard.present? && current_slave_group.present? && @shards_slave_groups.present? &&
+        @shards_slave_groups[current_shard].present? &&
+        @shards_slave_groups[current_shard][current_slave_group].present? &&
+        (current_model.replicated || @fully_replicated)
+  end
+
+  def send_queries_to_shard_slave_group(method, *args, &block)
+    old_shard = self.current_shard
+
+    begin
+      selected_slave_group = @shards_slave_groups[old_shard][current_slave_group]
+      self.current_shard = selected_slave_group.next
+      select_connection.send(method, *args, &block)
+    ensure
+      self.current_shard = old_shard
+    end
+  end
+
+  def should_send_queries_to_slave_group?(method)
+    @replicated && (current_model.replicated || @fully_replicated) && method.to_s =~ /select/ && current_slave_group.present? && @slave_groups.present?
+  end
+
+  def send_queries_to_slave_group(method, *args, &block)
+    old_shard = self.current_shard
+
+    begin
+      selected_slave_group = @slave_groups[current_slave_group]
+      self.current_shard = selected_slave_group.next
+      select_connection.send(method, *args, &block)
+    ensure
+      self.current_shard = old_shard
+    end
+  end
+
+
+
 
   protected
 
