@@ -23,7 +23,7 @@ class Octopus::Proxy
       shards_config = config[Octopus.rails_env()]
     end
 
-    shards_config ||= []
+    @shards_config = shards_config ||= []
 
     shards_config.each do |key, value|
       if value.is_a?(String)
@@ -62,8 +62,10 @@ class Octopus::Proxy
           @groups[key.to_s] << k.to_sym
         end
 
-        slaves = Hash[@groups[key.to_s].map {|k| @shards[k] }]
-        @slave_groups[key.to_sym] = Octopus::SlaveGroup.new(slaves)
+        if key.match(/slave/)
+          slaves = Hash[@groups[key.to_s].map { |v| [v, v ] }]
+          @slave_groups[key.to_sym] = Octopus::SlaveGroup.new(slaves)
+        end
       end
     end
 
@@ -102,7 +104,20 @@ class Octopus::Proxy
     elsif shard_symbol.is_a?(Hash)
       hash = shard_symbol
       shard_symbol = hash[:shard]
-      self.current_slave_group = hash[:slave_group] if hash.key? :slave_group
+      slave_group_symbol = hash[:slave_group]
+
+      if shard_symbol.nil? && slave_group_symbol.nil?
+        raise "Neither shard or slave group must be specified"
+      end
+
+      if shard_symbol.present?
+        raise "Nonexistent Shard Name: #{shard_symbol}" if @shards[shard_symbol].nil?
+      end
+
+      if slave_group_symbol.present?
+        raise "Nonexistent Slave Group Name: #{slave_group_symbol} in shards config: #{@shards_config.inspect}" if @slave_groups[slave_group_symbol].nil?
+        self.current_slave_group = slave_group_symbol
+      end
     else
       raise "Nonexistent Shard Name: #{shard_symbol}" if @shards[shard_symbol].nil?
     end

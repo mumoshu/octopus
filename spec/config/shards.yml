@@ -179,7 +179,7 @@ replicated_slave_grouped:
         <<: *mysql
     slaves2:
       slave21:
-        database: octopus_shard_3
+        database: octopus_shard_1
         <<: *mysql
 
 modify_config:
