@@ -302,9 +302,6 @@ class Octopus::Proxy
     @shards.any? { |k, v| v.connected? }
   end
 
-
-
-
   def should_send_queries_to_shard_slave_group?(method)
     @replicated && method.to_s =~ /select/ && current_shard.present? && current_slave_group.present? && @shards_slave_groups.present? &&
         @shards_slave_groups[current_shard].present? &&
@@ -339,9 +336,6 @@ class Octopus::Proxy
       self.current_shard = old_shard
     end
   end
-
-
-
 
   protected
 
