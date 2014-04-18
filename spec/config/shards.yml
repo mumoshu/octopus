@@ -181,6 +181,13 @@ replicated_slave_grouped:
       slave21:
         database: octopus_shard_1
         <<: *mysql
+    slaves3:
+      slave31:
+        database: octopus_shard_1
+        <<: *mysql
+      slave32:
+        database: octopus_shard_2
+        <<: *mysql
 
 modify_config:
   replicated: true

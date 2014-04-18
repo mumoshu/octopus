@@ -27,4 +27,20 @@ describe "when the database is replicated and has slave groups" do
       Cat.using(slave_group: :slaves2).count.should == 2
     end
   end
+
+  it "should distribute queries between slaves in a slave group in round-robin" do
+    OctopusHelper.using_environment :replicated_slave_grouped do
+      # The query goes to :master(`octopus_shard_1`)
+      Cat.create!(:name => "Thiago1")
+      # The query goes to :master(`octopus_shard_1`)
+      Cat.create!(:name => "Thiago2")
+
+      # The query goes to :slave32(`octopus_shard_2`)
+      Cat.using(slave_group: :slaves3).count.should == 0
+      # The query goes to :slave31(`octopus_shard_1`)
+      Cat.using(slave_group: :slaves3).count.should == 2
+      # The query goes to :slave32(`octopus_shard_2`)
+      Cat.using(slave_group: :slaves3).count.should == 0
+    end
+  end
 end
