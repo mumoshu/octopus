@@ -43,4 +43,22 @@ describe "when the database is replicated and has slave groups" do
       Cat.using(slave_group: :slaves3).count.should == 0
     end
   end
+
+  it "should make queries to master when slave groups are configured but not selected" do
+    OctopusHelper.using_environment :replicated_slave_grouped do
+      # All the queries go to :master(`octopus_shard_1`)
+
+      Cat.create!(:name => "Thiago1")
+      Cat.create!(:name => "Thiago2")
+
+      # In `database.yml` and `shards.yml`, we have configured 1 master and 4 slaves.
+      # So we can ensure Octopus is not distributing queries between them
+      # by asserting 1 + 4 = 5 queries go to :master(`octopus_shard_1`)
+      Cat.count.should == 2
+      Cat.count.should == 2
+      Cat.count.should == 2
+      Cat.count.should == 2
+      Cat.count.should == 2
+    end
+  end
 end
