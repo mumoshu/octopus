@@ -115,7 +115,10 @@ class Octopus::Proxy
       end
 
       if slave_group_symbol.present?
-        raise "Nonexistent Slave Group Name: #{slave_group_symbol} in shards config: #{@shards_config.inspect}" if @slave_groups[slave_group_symbol].nil?
+        if (@shards_slave_groups.try(:[], shard_symbol).present? && @shards_slave_groups[shard_symbol][slave_group_symbol].nil?) ||
+            (@shards_slave_groups.try(:[], shard_symbol).nil? && @slave_groups[slave_group_symbol].nil?)
+          raise "Nonexistent Slave Group Name: #{slave_group_symbol} in shards config: #{@shards_config.inspect}"
+        end
         self.current_slave_group = slave_group_symbol
       end
     else
