@@ -7,7 +7,7 @@ class Octopus::Proxy
 
   def initialize(config = Octopus.config)
     initialize_shards(config)
-    initialize_replication(config) if !config.nil? && config["replicated"]# && !@shards_slave_groups.present? && !@slave_groups.present?
+    initialize_replication(config) if !config.nil? && config["replicated"]
   end
 
   def initialize_shards(config)
